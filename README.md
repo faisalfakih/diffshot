@@ -52,7 +52,7 @@ diffshot HEAD~3
 | `--output <FILE>` | `-o` | Output filename. Extension sets the format: `png`, `jpg`, `jpeg`, `svg` (default: `diffshot.png`) |
 | `--dir <DIR>` | `-d` | Directory to write output into (default: current directory) |
 | `--max-lines <N>` | `-l` | Truncate the entire diff at N total lines |
-| `--max-lines-per-chunk <N>` | `-L` | Truncate each `@@` hunk independently at N lines (shows a footer per truncated chunk) |
+| `--max-lines-per-chunk <N>` | `-L` | Truncate each `@@` chunk/hunk independently at N lines (shows a footer per truncated chunk) |
 | `--resolution <N>` | `-r` | Pixel scale multiplier for output resolution (default: `2`) |
 | `--split` | `-s` | Render each changed file as a separate image |
 | `--no-highlight` | | Disable syntax highlighting |

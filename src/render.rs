@@ -151,21 +151,37 @@ pub fn render_svg(
         };
 
         for hunk_group in &hunk_groups {
-            // fresh highlighter per visual block (resets parse state between blocks)
-            let mut hl: Option<HighlightLines> = match (&ss, &theme) {
-                (Some(ss), Some(theme)) => {
-                    let syntax = ss.find_syntax_by_extension(ext)
-                        .unwrap_or_else(|| ss.find_syntax_plain_text());
-                    Some(HighlightLines::new(syntax, theme))
+            // global cap reached: tally stats only, skip all rendering for this group
+            if lines_rendered >= limit {
+                for hunk in hunk_group {
+                    for dl in &hunk.lines {
+                        total_lines_seen += 1;
+                        match dl.line_type {
+                            LineType::Added => stats.added += 1,
+                            LineType::Removed => stats.removed += 1,
+                            LineType::Unchanged | LineType::Metadata => {}
+                        }
+                    }
                 }
-                _ => None,
-            };
+                continue;
+            }
 
             let file_start_y = y;
             y += emit_file_header(&mut elems, y, &file.filename);
             let code_start_y = y;
 
             for hunk in hunk_group {
+                // fresh highlighter per hunk: hunks are non-contiguous so parse state
+                // from one hunk is invalid at the start of the next
+                let mut hl: Option<HighlightLines> = match (&ss, &theme) {
+                    (Some(ss), Some(theme)) => {
+                        let syntax = ss.find_syntax_by_extension(ext)
+                            .unwrap_or_else(|| ss.find_syntax_plain_text());
+                        Some(HighlightLines::new(syntax, theme))
+                    }
+                    _ => None,
+                };
+
                 let (mut old_n, mut new_n) = parse_hunk_header(&hunk.header);
 
                 if lines_rendered < limit {
