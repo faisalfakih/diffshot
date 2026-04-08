@@ -1,1 +1,12 @@
 /target
+.DS_Store
+*.png
+*.jpeg
+*.jpg
+*.svg
+!examples/**
+
+# if you chose to use claude code while contributing, the following files will be ignored by git
+CLAUDE.md
+/.claude
+/memory
