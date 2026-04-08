@@ -2,7 +2,7 @@
 
 diffshot is a Rust CLI that takes a git diff and renders it as a presentable, shareable image
 
-**[Installation](#installation) · [Usage](#usage) · [Options](#options) · [Examples](#examples) · [Contact](#contact) · [License](#license)**
+**[Installation](#installation) · [Updating](#updating) · [Usage](#usage) · [Options](#options) · [Examples](#examples) · [Contact](#contact) · [License](#license)**
 
 <img src="examples/diffshot.png" width="650" />
 
@@ -23,6 +23,18 @@ powershell -c "irm https://github.com/faisalfakih/diffshot/releases/latest/downl
 **Via cargo**
 ```bash
 cargo install diffshot
+```
+
+## Updating
+
+**If installed via the install script (macOS/Linux/Windows)**
+```bash
+diffshot-update
+```
+
+**If installed via cargo**
+```bash
+cargo install diffshot --force
 ```
 
 ## Usage
@@ -84,3 +96,4 @@ diffshot --max-lines-per-chunk 50
 ## License
 
 MIT © [Faisal Fakih](https://github.com/faisalfakih)
+
