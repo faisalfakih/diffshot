@@ -129,7 +129,7 @@ pub fn render_svg(
                     match dl.line_type {
                         LineType::Added => stats.added += 1,
                         LineType::Removed => stats.removed += 1,
-                        LineType::Unchanged => {}
+                        LineType::Unchanged | LineType::Metadata => {}
                     }
                 }
             }
@@ -163,7 +163,7 @@ pub fn render_svg(
                 match dl.line_type {
                     LineType::Added => stats.added += 1,
                     LineType::Removed => stats.removed += 1,
-                    LineType::Unchanged => {}
+                    LineType::Unchanged | LineType::Metadata => {}
                 }
 
                 if lines_rendered >= limit {
@@ -172,7 +172,14 @@ pub fn render_svg(
                         LineType::Added => { new_n += 1; }
                         LineType::Removed => { old_n += 1; }
                         LineType::Unchanged => { old_n += 1; new_n += 1; }
+                        LineType::Metadata => {} // marker, no line numbers
                     }
+                    continue;
+                }
+
+                if dl.line_type == LineType::Metadata {
+                    lines_rendered += 1;
+                    y += emit_metadata_line(&mut elems, y, &dl.content);
                     continue;
                 }
 
@@ -194,6 +201,7 @@ pub fn render_svg(
                         new_n += 1;
                         (o, n, "", CARD_BG, UNCHANGED_FG)
                     }
+                    LineType::Metadata => unreachable!(),
                 };
 
                 // prefix takes 2 chars ("+ " / "- "), reduce budget accordingly
@@ -319,10 +327,20 @@ pub fn render_to_file(svg_str: &str, output_path: &str, scale: u32, format: Form
         .map_err(|e| anyhow::anyhow!("SVG parse error: {e}"))?;
 
     let size = tree.size().to_int_size();
-    let pw = size.width() * scale;
-    let ph = size.height() * scale;
+    let pw = size.width()
+        .checked_mul(scale)
+        .filter(|&v| v > 0)
+        .ok_or_else(|| anyhow::anyhow!(
+            "Invalid output width: {}×{} overflows or is zero", size.width(), scale
+        ))?;
+    let ph = size.height()
+        .checked_mul(scale)
+        .filter(|&v| v > 0)
+        .ok_or_else(|| anyhow::anyhow!(
+            "Invalid output height: {}×{} overflows or is zero", size.height(), scale
+        ))?;
     let mut pixmap = tiny_skia::Pixmap::new(pw, ph)
-        .ok_or_else(|| anyhow::anyhow!("Failed to allocate pixmap"))?;
+        .ok_or_else(|| anyhow::anyhow!("Failed to allocate pixmap ({}×{})", pw, ph))?;
 
     resvg::render(&tree, tiny_skia::Transform::from_scale(scale as f32, scale as f32), &mut pixmap.as_mut());
 
@@ -387,6 +405,16 @@ fn emit_hunk_header(out: &mut Vec<String>, y: u32, hunk: &Hunk) -> u32 {
         xml_escape(&hunk.header)
     ));
     HUNK_HDR_H
+}
+
+fn emit_metadata_line(out: &mut Vec<String>, y: u32, text: &str) -> u32 {
+    rect(out, CONTENT_X, y, CONTENT_W, LINE_H, CARD_BG);
+    let ty = y + text_baseline(LINE_H, FONT_SMALL);
+    out.push(format!(
+        r#"<text x="{CODE_X}" y="{ty}" fill="{LINE_NUM_FG}" font-family="{FONT}" font-size="{FONT_SMALL}" font-style="italic">{}</text>"#,
+        xml_escape(text)
+    ));
+    LINE_H
 }
 
 fn emit_truncated_footer(out: &mut Vec<String>, y: u32, skipped: usize) -> u32 {

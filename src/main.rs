@@ -20,7 +20,7 @@ struct Args {
     #[arg(long, short)]
     file: Option<String>,
 
-    /// Output filename — extension determines format: png, jpg, jpeg, svg (default: diffshot.png)
+    /// Output filename - extension determines format: png, jpg, jpeg, svg (default: diffshot.png)
     #[arg(long, short)]
     output: Option<String>,
 
@@ -103,7 +103,39 @@ fn main() {
         let mut total_removed = 0;
 
         for file in &file_diffs {
-            let path = format!("{base}-{}.{ext}", sanitize_filename(&file.filename));
+            let path = if let Some(dir) = &args.dir {
+                // Preserve relative hierarchy: sanitize each path component individually
+                // so that src/foo/bar.rs and src/foo-bar.rs remain distinct.
+                let rel = std::path::Path::new(&file.filename);
+                let stem = rel.file_name()
+                    .map(|n| sanitize_filename(&n.to_string_lossy()))
+                    .unwrap_or_else(|| sanitize_filename(&file.filename));
+                let sanitized_parent: Option<String> = rel.parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .map(|p| {
+                        p.components()
+                            .map(|c| sanitize_filename(&c.as_os_str().to_string_lossy()))
+                            .collect::<Vec<_>>()
+                            .join("/")
+                    });
+                let out_dir = match sanitized_parent {
+                    Some(ref parent) => {
+                        let d = format!("{}/{}", dir.trim_end_matches('/'), parent);
+                        if let Err(e) = std::fs::create_dir_all(&d) {
+                            eprintln!("Error creating directory {d}: {e}");
+                            std::process::exit(1);
+                        }
+                        d
+                    }
+                    None => dir.trim_end_matches('/').to_string(),
+                };
+                format!("{out_dir}/{base_name}-{stem}.{ext}")
+            } else {
+                // Flat layout: append a hash of the full relative path so that
+                // src/foo/bar.rs and src/foo-bar.rs never produce the same filename.
+                let hash = path_hash(&file.filename);
+                format!("{base}-{}-{hash}.{ext}", sanitize_filename(&file.filename))
+            };
             let (svg, stats) = render::render_svg(
                 std::slice::from_ref(file),
                 args.max_lines,
@@ -153,9 +185,19 @@ fn sanitize_filename(name: &str) -> String {
     name.replace('/', "-").replace('.', "_")
 }
 
+/// FNV-1a 32-bit hash - dependency-free and stable within a build.
+fn path_hash(s: &str) -> String {
+    let mut h: u32 = 2166136261;
+    for b in s.bytes() {
+        h ^= b as u32;
+        h = h.wrapping_mul(16777619);
+    }
+    format!("{h:08x}")
+}
+
 fn get_git_diff(args: &Args) -> Result<String> {
     let mut cmd = Command::new("git");
-    cmd.arg("diff");
+    cmd.arg("diff").arg("--no-ext-diff").arg("--no-color");
 
     if let Some(target) = &args.target {
         cmd.arg(target);
@@ -166,5 +208,9 @@ fn get_git_diff(args: &Args) -> Result<String> {
     }
 
     let output = cmd.output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        anyhow::bail!("git diff failed: {stderr}");
+    }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }

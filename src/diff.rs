@@ -24,6 +24,8 @@ pub enum LineType {
     Added,
     Removed,
     Unchanged,
+    /// Git "\ No newline at end of file" marker - not a real source line.
+    Metadata,
 }
 
 
@@ -45,8 +47,24 @@ pub fn parse_diff(raw_diff: &str) -> Vec<FileDiff> {
             if let Some(file) = current_file.take() {
                 file_diffs.push(file);
             }
+            // Parse "diff --git a/<path> b/<path>" to seed filename immediately.
+            // This handles deletions/renames where "+++ b/..." may never appear.
+            let seeded_name = line
+                .strip_prefix("diff --git ")
+                .and_then(|rest| {
+                    // rest is "a/<a_path> b/<b_path>"
+                    let (a_part, b_part) = rest.split_once(" b/")?;
+                    let b_path = b_part.trim();
+                    if b_path == "/dev/null" || b_path.is_empty() {
+                        // deletion: fall back to a/ path
+                        a_part.strip_prefix("a/").map(|s| s.trim().to_string())
+                    } else {
+                        Some(b_path.to_string())
+                    }
+                })
+                .unwrap_or_default();
             current_file = Some(FileDiff {
-                filename: String::new(), // filled in when we hit +++ line
+                filename: seeded_name,
                 diff: Vec::new(),
             });
         } else if line.starts_with("+++ b/") {
@@ -64,17 +82,24 @@ pub fn parse_diff(raw_diff: &str) -> Vec<FileDiff> {
                 lines: Vec::new(),
             });
         } else if let Some(hunk) = &mut current_hunk {
-            let line_type = if line.starts_with('+') {
-                LineType::Added
-            } else if line.starts_with('-') {
-                LineType::Removed
+            if line.starts_with("\\ No newline") {
+                hunk.lines.push(DiffLine {
+                    content: line.to_string(),
+                    line_type: LineType::Metadata,
+                });
             } else {
-                LineType::Unchanged
-            };
-            hunk.lines.push(DiffLine {
-                content: if line.is_empty() { String::new() } else { line[1..].to_string() },
-                line_type,
-            });
+                let line_type = if line.starts_with('+') {
+                    LineType::Added
+                } else if line.starts_with('-') {
+                    LineType::Removed
+                } else {
+                    LineType::Unchanged
+                };
+                hunk.lines.push(DiffLine {
+                    content: if line.is_empty() { String::new() } else { line[1..].to_string() },
+                    line_type,
+                });
+            }
         }
     }
 
