@@ -32,9 +32,17 @@ struct Args {
     #[arg(long, short='l')]
     max_lines: Option<usize>,
 
+    /// Maximum number of lines to render per chunk/hunk (truncates each @@ block independently)
+    #[arg(long, short='L')]
+    max_lines_per_chunk: Option<usize>,
+
     /// Disable syntax highlighting
     #[arg(long)]
     no_highlight: bool,
+
+    /// Compact mode: render all hunks of a file in one block instead of one block per chunk
+    #[arg(long)]
+    compact: bool,
 
     /// Pixel scale multiplier for output resolution (default: 2)
     #[arg(long, short, default_value_t = 2)]
@@ -139,8 +147,10 @@ fn main() {
             let (svg, stats) = render::render_svg(
                 std::slice::from_ref(file),
                 args.max_lines,
+                args.max_lines_per_chunk,
                 args.target.as_deref(),
                 !args.no_highlight,
+                args.compact,
             );
             if let Err(e) = render::render_to_file(&svg, &path, args.resolution, format_from_ext(&path)) {
                 eprintln!("Error rendering {path}: {e}");
@@ -158,7 +168,7 @@ fn main() {
             elapsed.as_secs_f64(),
         );
     } else {
-        let (svg, stats) = render::render_svg(&file_diffs, args.max_lines, args.target.as_deref(), !args.no_highlight);
+        let (svg, stats) = render::render_svg(&file_diffs, args.max_lines, args.max_lines_per_chunk, args.target.as_deref(), !args.no_highlight, args.compact);
 
         if let Err(e) = render::render_to_file(&svg, &output, args.resolution, fmt) {
             eprintln!("Error rendering image: {}", e);

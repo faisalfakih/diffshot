@@ -94,15 +94,19 @@ pub struct RenderStats {
 pub fn render_svg(
     file_diffs: &[FileDiff],
     max_lines: Option<usize>,
+    max_lines_per_chunk: Option<usize>,
     target: Option<&str>,
     highlight: bool,
+    compact: bool,
 ) -> (String, RenderStats) {
     let mut elems: Vec<String> = Vec::with_capacity(file_diffs.len() * 64);
     let mut y = OUTER_PAD + CARD_PAD_TOP;
     let mut stats = RenderStats { added: 0, removed: 0, truncated: false };
     let mut lines_rendered: usize = 0;
     let mut total_lines_seen: usize = 0;
+    let mut total_chunk_skipped: usize = 0;
     let limit = max_lines.unwrap_or(usize::MAX);
+    let chunk_limit = max_lines_per_chunk.unwrap_or(usize::MAX);
 
     // load syntect once if highlighting is enabled
     let (ss, theme) = if highlight {
@@ -121,7 +125,7 @@ pub fn render_svg(
     y += emit_chrome(&mut elems, y, &chrome_label);
 
     for file in file_diffs {
-        // if limit already exhausted, only tally stats - don't render.
+        // if global limit already exhausted, only tally stats - don't render.
         if lines_rendered >= limit {
             for hunk in &file.diff {
                 for dl in &hunk.lines {
@@ -136,132 +140,180 @@ pub fn render_svg(
             continue;
         }
 
-        // create a per-file highlighter (stateful - carries parse state across lines)
-        let mut hl: Option<HighlightLines> = match (&ss, &theme) {
-            (Some(ss), Some(theme)) => {
-                let ext = file.filename.rsplit('.').next().unwrap_or("");
-                let syntax = ss.find_syntax_by_extension(ext)
-                    .unwrap_or_else(|| ss.find_syntax_plain_text());
-                Some(HighlightLines::new(syntax, theme))
-            }
-            _ => None,
+        let ext = file.filename.rsplit('.').next().unwrap_or("");
+
+        // In split mode (default): each hunk gets its own visual block.
+        // In compact mode (--compact): all hunks share one block.
+        let hunk_groups: Vec<Vec<&Hunk>> = if compact {
+            if file.diff.is_empty() { vec![] } else { vec![file.diff.iter().collect()] }
+        } else {
+            file.diff.iter().map(|h| vec![h]).collect()
         };
 
-        let file_start_y = y;
-        y += emit_file_header(&mut elems, y, &file.filename);
-        let code_start_y = y;
-
-        for hunk in &file.diff {
-            let (mut old_n, mut new_n) = parse_hunk_header(&hunk.header);
-
-            if lines_rendered < limit {
-                y += emit_hunk_header(&mut elems, y, hunk);
+        for hunk_group in &hunk_groups {
+            // global cap reached: tally stats only, skip all rendering for this group
+            if lines_rendered >= limit {
+                for hunk in hunk_group {
+                    for dl in &hunk.lines {
+                        total_lines_seen += 1;
+                        match dl.line_type {
+                            LineType::Added => stats.added += 1,
+                            LineType::Removed => stats.removed += 1,
+                            LineType::Unchanged | LineType::Metadata => {}
+                        }
+                    }
+                }
+                continue;
             }
 
-            for dl in &hunk.lines {
-                total_lines_seen += 1;
-                match dl.line_type {
-                    LineType::Added => stats.added += 1,
-                    LineType::Removed => stats.removed += 1,
-                    LineType::Unchanged | LineType::Metadata => {}
-                }
+            let file_start_y = y;
+            y += emit_file_header(&mut elems, y, &file.filename);
+            let code_start_y = y;
 
-                if lines_rendered >= limit {
-                    // advance counters but don't render
-                    match dl.line_type {
-                        LineType::Added => { new_n += 1; }
-                        LineType::Removed => { old_n += 1; }
-                        LineType::Unchanged => { old_n += 1; new_n += 1; }
-                        LineType::Metadata => {} // marker, no line numbers
+            for hunk in hunk_group {
+                // fresh highlighter per hunk: hunks are non-contiguous so parse state
+                // from one hunk is invalid at the start of the next
+                let mut hl: Option<HighlightLines> = match (&ss, &theme) {
+                    (Some(ss), Some(theme)) => {
+                        let syntax = ss.find_syntax_by_extension(ext)
+                            .unwrap_or_else(|| ss.find_syntax_plain_text());
+                        Some(HighlightLines::new(syntax, theme))
                     }
-                    continue;
-                }
-
-                if dl.line_type == LineType::Metadata {
-                    lines_rendered += 1;
-                    y += emit_metadata_line(&mut elems, y, &dl.content);
-                    continue;
-                }
-
-                let (old_s, new_s, prefix, bg, fg) = match dl.line_type {
-                    LineType::Added => {
-                        let s = new_n.to_string();
-                        new_n += 1;
-                        (String::new(), s, "+", ADDED_BG, ADDED_FG)
-                    }
-                    LineType::Removed => {
-                        let s = old_n.to_string();
-                        old_n += 1;
-                        (s, String::new(), "-", REMOVED_BG, REMOVED_FG)
-                    }
-                    LineType::Unchanged => {
-                        let o = old_n.to_string();
-                        let n = new_n.to_string();
-                        old_n += 1;
-                        new_n += 1;
-                        (o, n, "", CARD_BG, UNCHANGED_FG)
-                    }
-                    LineType::Metadata => unreachable!(),
+                    _ => None,
                 };
 
-                // prefix takes 2 chars ("+ " / "- "), reduce budget accordingly
-                let prefix_chars = if prefix.is_empty() { 0 } else { 2 };
-                let content = truncate_line(&dl.content, MAX_CODE_CHARS.saturating_sub(prefix_chars));
+                let (mut old_n, mut new_n) = parse_hunk_header(&hunk.header);
 
-                let hl_ctx = ss.as_ref().zip(hl.as_mut());
-                let code_svg = build_code_line(hl_ctx, prefix, fg, &content);
-
-                let by = y + text_baseline(LINE_H, FONT_SIZE);
-                rect(&mut elems, CONTENT_X, y, CONTENT_W, LINE_H, bg);
-
-                if !old_s.is_empty() {
-                    elems.push(format!(
-                        r#"<text x="{OLD_NUM_X}" y="{by}" text-anchor="end" fill="{LINE_NUM_FG}" font-family="{FONT}" font-size="{FONT_SMALL}">{old_s}</text>"#
-                    ));
-                }
-                if !new_s.is_empty() {
-                    elems.push(format!(
-                        r#"<text x="{NEW_NUM_X}" y="{by}" text-anchor="end" fill="{LINE_NUM_FG}" font-family="{FONT}" font-size="{FONT_SMALL}">{new_s}</text>"#
-                    ));
-                }
-                if !code_svg.is_empty() {
-                    elems.push(format!(
-                        r#"<text x="{CODE_X}" y="{by}" fill="{fg}" font-family="{FONT}" font-size="{FONT_SIZE}" xml:space="preserve">{code_svg}</text>"#
-                    ));
+                if lines_rendered < limit {
+                    y += emit_hunk_header(&mut elems, y, hunk);
                 }
 
-                y += LINE_H;
-                lines_rendered += 1;
+                let mut chunk_lines_rendered: usize = 0;
+                let mut chunk_lines_skipped: usize = 0;
+
+                for dl in &hunk.lines {
+                    total_lines_seen += 1;
+                    match dl.line_type {
+                        LineType::Added => stats.added += 1,
+                        LineType::Removed => stats.removed += 1,
+                        LineType::Unchanged | LineType::Metadata => {}
+                    }
+
+                    let global_capped = lines_rendered >= limit;
+                    let chunk_capped = chunk_lines_rendered >= chunk_limit;
+
+                    if global_capped || chunk_capped {
+                        // track lines skipped due to per-chunk cap only (not global cap)
+                        if chunk_capped && !global_capped {
+                            chunk_lines_skipped += 1;
+                        }
+                        // advance line number counters even when not rendering
+                        match dl.line_type {
+                            LineType::Added => { new_n += 1; }
+                            LineType::Removed => { old_n += 1; }
+                            LineType::Unchanged => { old_n += 1; new_n += 1; }
+                            LineType::Metadata => {}
+                        }
+                        continue;
+                    }
+
+                    if dl.line_type == LineType::Metadata {
+                        lines_rendered += 1;
+                        chunk_lines_rendered += 1;
+                        y += emit_metadata_line(&mut elems, y, &dl.content);
+                        continue;
+                    }
+
+                    let (old_s, new_s, prefix, bg, fg) = match dl.line_type {
+                        LineType::Added => {
+                            let s = new_n.to_string();
+                            new_n += 1;
+                            (String::new(), s, "+", ADDED_BG, ADDED_FG)
+                        }
+                        LineType::Removed => {
+                            let s = old_n.to_string();
+                            old_n += 1;
+                            (s, String::new(), "-", REMOVED_BG, REMOVED_FG)
+                        }
+                        LineType::Unchanged => {
+                            let o = old_n.to_string();
+                            let n = new_n.to_string();
+                            old_n += 1;
+                            new_n += 1;
+                            (o, n, "", CARD_BG, UNCHANGED_FG)
+                        }
+                        LineType::Metadata => unreachable!(),
+                    };
+
+                    // prefix takes 2 chars ("+ " / "- "), reduce budget accordingly
+                    let prefix_chars = if prefix.is_empty() { 0 } else { 2 };
+                    let content = truncate_line(&dl.content, MAX_CODE_CHARS.saturating_sub(prefix_chars));
+
+                    let hl_ctx = ss.as_ref().zip(hl.as_mut());
+                    let code_svg = build_code_line(hl_ctx, prefix, fg, &content);
+
+                    let by = y + text_baseline(LINE_H, FONT_SIZE);
+                    rect(&mut elems, CONTENT_X, y, CONTENT_W, LINE_H, bg);
+
+                    if !old_s.is_empty() {
+                        elems.push(format!(
+                            r#"<text x="{OLD_NUM_X}" y="{by}" text-anchor="end" fill="{LINE_NUM_FG}" font-family="{FONT}" font-size="{FONT_SMALL}">{old_s}</text>"#
+                        ));
+                    }
+                    if !new_s.is_empty() {
+                        elems.push(format!(
+                            r#"<text x="{NEW_NUM_X}" y="{by}" text-anchor="end" fill="{LINE_NUM_FG}" font-family="{FONT}" font-size="{FONT_SMALL}">{new_s}</text>"#
+                        ));
+                    }
+                    if !code_svg.is_empty() {
+                        elems.push(format!(
+                            r#"<text x="{CODE_X}" y="{by}" fill="{fg}" font-family="{FONT}" font-size="{FONT_SIZE}" xml:space="preserve">{code_svg}</text>"#
+                        ));
+                    }
+
+                    y += LINE_H;
+                    lines_rendered += 1;
+                    chunk_lines_rendered += 1;
+                }
+
+                // per-chunk truncation footer at the end of this hunk
+                if chunk_lines_skipped > 0 {
+                    stats.truncated = true;
+                    total_chunk_skipped += chunk_lines_skipped;
+                    y += emit_truncated_footer(&mut elems, y, chunk_lines_skipped);
+                }
             }
+
+            let file_end_y = y;
+
+            // gutter separator - vertical line through code area only
+            elems.push(format!(
+                r#"<line x1="{GUTTER_SEP_X}" y1="{code_start_y}" x2="{GUTTER_SEP_X}" y2="{file_end_y}" stroke="{FILE_BORDER}" stroke-width="1"/>"#
+            ));
+
+            // header / code body separator
+            elems.push(format!(
+                r#"<line x1="{CONTENT_X}" y1="{code_start_y}" x2="{}" y2="{code_start_y}" stroke="{FILE_BORDER}" stroke-width="1"/>"#,
+                CONTENT_X + CONTENT_W
+            ));
+
+            // border overlay drawn last so it sits on top of content
+            let file_h = file_end_y - file_start_y;
+            elems.push(format!(
+                r#"<rect x="{CONTENT_X}" y="{file_start_y}" width="{CONTENT_W}" height="{file_h}" rx="{FILE_RADIUS}" fill="none" stroke="{FILE_BORDER}" stroke-width="1"/>"#
+            ));
+
+            y += FILE_GAP;
         }
-
-        let file_end_y = y;
-
-        // gutter separator - vertical line through code area only
-        elems.push(format!(
-            r#"<line x1="{GUTTER_SEP_X}" y1="{code_start_y}" x2="{GUTTER_SEP_X}" y2="{file_end_y}" stroke="{FILE_BORDER}" stroke-width="1"/>"#
-        ));
-
-        // header / code body separator
-        elems.push(format!(
-            r#"<line x1="{CONTENT_X}" y1="{code_start_y}" x2="{}" y2="{code_start_y}" stroke="{FILE_BORDER}" stroke-width="1"/>"#,
-            CONTENT_X + CONTENT_W
-        ));
-
-        // border overlay drawn last so it sits on top of content
-        let file_h = file_end_y - file_start_y;
-        elems.push(format!(
-            r#"<rect x="{CONTENT_X}" y="{file_start_y}" width="{CONTENT_W}" height="{file_h}" rx="{FILE_RADIUS}" fill="none" stroke="{FILE_BORDER}" stroke-width="1"/>"#
-        ));
-
-        y += FILE_GAP;
     }
 
-    // truncated notice
-    if lines_rendered < total_lines_seen {
+    // global truncation footer for lines skipped due to the global cap (not per-file cap)
+    let globally_skipped = total_lines_seen
+        .saturating_sub(lines_rendered)
+        .saturating_sub(total_chunk_skipped);
+    if globally_skipped > 0 {
         stats.truncated = true;
-        let skipped = total_lines_seen - lines_rendered;
-        y += emit_truncated_footer(&mut elems, y, skipped);
+        y += emit_truncated_footer(&mut elems, y, globally_skipped);
     }
 
     // stats footer
