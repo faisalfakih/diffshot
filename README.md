@@ -51,10 +51,12 @@ diffshot HEAD~3
 | `--file <FILE>` | `-f` | Restrict the diff to a specific file |
 | `--output <FILE>` | `-o` | Output filename. Extension sets the format: `png`, `jpg`, `jpeg`, `svg` (default: `diffshot.png`) |
 | `--dir <DIR>` | `-d` | Directory to write output into (default: current directory) |
-| `--max-lines <N>` | `-l` | Truncate output at N lines (a footer is added when truncated) |
+| `--max-lines <N>` | `-l` | Truncate the entire diff at N total lines |
+| `--max-lines-per-chunk <N>` | `-L` | Truncate each `@@` hunk independently at N lines (shows a footer per truncated chunk) |
 | `--resolution <N>` | `-r` | Pixel scale multiplier for output resolution (default: `2`) |
 | `--split` | `-s` | Render each changed file as a separate image |
 | `--no-highlight` | | Disable syntax highlighting |
+| `--compact` | | Render all hunks of a file in one block (default: each chunk gets its own block) |
 
 ## Examples
 
@@ -70,6 +72,9 @@ diffshot main..dev --split --resolution 3
 
 # Cap at 100 lines, no syntax highlighting
 diffshot --max-lines 100 --no-highlight
+
+# Cap each chunk at 50 lines (each @@ hunk gets its own truncation footer)
+diffshot --max-lines-per-chunk 50
 ```
 
 ## Contact
