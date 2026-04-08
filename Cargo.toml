@@ -1,7 +1,21 @@
 [package]
 name = "diffshot"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
+authors = ["Faisal Fakih <me@faisalfakih.com>"]
+description = "A tool to generate images from git diffs"
+repository = "https://github.com/faisalfakih/diffshot"
+homepage = "https://github.com/faisalfakih/diffshot"
+documentation = "https://github.com/faisalfakih/diffshot"
+readme = "README.md"
+license = "MIT"
+keywords = ["diff", "git", "image", "screenshot", "visualization"]
+categories = ["command-line-utilities", "development-tools", "visualization"]
+
+[[bin]]
+name = "diffshot"
+path = "src/main.rs"
+
 
 [dependencies]
 anyhow = "1.0.102"
@@ -9,3 +23,8 @@ clap = { version = "4.6.0", features = ["derive"] }
 resvg = "0.44"
 syntect = { version = "5", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

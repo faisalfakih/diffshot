@@ -11,7 +11,7 @@ use anyhow::Result;
 #[command(name = "diffshot", version,
     about = "A tool to generate images from git diffs",
     author = "Faisal Fakih",
-    version)]
+    )]
 struct Args {
     /// Git diff target (e.g. main..feat/auth, HEAD~3). Defaults to uncommitted changes
     target: Option<String>,
