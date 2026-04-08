@@ -1,6 +1,6 @@
 # diffshot
 
-diffshot is a Rust CLI that takes a git diff and renders it as a presentable, shareable image
+Turn git diffs into beautiful, shareable images - straight from your terminal.
 
 **[Installation](#installation) · [Updating](#updating) · [Usage](#usage) · [Options](#options) · [Examples](#examples) · [Contact](#contact) · [License](#license)**
 
