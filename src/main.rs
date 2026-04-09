@@ -207,7 +207,7 @@ fn path_hash(s: &str) -> String {
 
 fn get_git_diff(args: &Args) -> Result<String> {
     let mut cmd = Command::new("git");
-    cmd.arg("diff").arg("--no-ext-diff").arg("--no-color");
+    cmd.arg("diff").arg("--no-ext-diff").arg("--no-color").arg("--default-prefix");
 
     if let Some(target) = &args.target {
         cmd.arg(target);
