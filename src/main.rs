@@ -51,6 +51,10 @@ struct Args {
     /// Render each changed file as a separate image
     #[arg(long, short)]
     split: bool,
+
+    /// Show paths relative to the current directory instead of the repo root
+    #[arg(long)]
+    relative: bool,
 }
 
 fn format_from_ext(filename: &str) -> render::Format {
@@ -207,7 +211,11 @@ fn path_hash(s: &str) -> String {
 
 fn get_git_diff(args: &Args) -> Result<String> {
     let mut cmd = Command::new("git");
-    cmd.arg("diff").arg("--no-ext-diff").arg("--no-color");
+    cmd.arg("diff").arg("--no-ext-diff").arg("--no-color").arg("--default-prefix");
+
+    if args.relative {
+        cmd.arg("--relative");
+    }
 
     if let Some(target) = &args.target {
         cmd.arg(target);

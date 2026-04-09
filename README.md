@@ -69,6 +69,7 @@ diffshot HEAD~3
 | `--split` | `-s` | Render each changed file as a separate image |
 | `--no-highlight` | | Disable syntax highlighting |
 | `--compact` | | Render all hunks of a file in one block (default: each chunk gets its own block) |
+| `--relative` | | Show paths relative to the current directory instead of the repo root |
 
 ## Examples
 

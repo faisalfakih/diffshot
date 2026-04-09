@@ -30,6 +30,50 @@ pub enum LineType {
 
 
 
+/// Unescape a git-quoted path (e.g. `"src/h\303\251llo.rs"` -> `src/héllo.rs`).
+/// If the string is not quoted, returns it unchanged.
+fn unescape_git_path(s: &str) -> String {
+    let s = s.trim();
+    if !s.starts_with('"') || !s.ends_with('"') {
+        return s.to_string();
+    }
+    let inner = &s[1..s.len() - 1];
+    let mut out = Vec::new();
+    let bytes = inner.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            i += 1;
+            match bytes[i] {
+                b'n'  => { out.push(b'\n'); i += 1; }
+                b't'  => { out.push(b'\t'); i += 1; }
+                b'r'  => { out.push(b'\r'); i += 1; }
+                b'\\' => { out.push(b'\\'); i += 1; }
+                b'"'  => { out.push(b'"');  i += 1; }
+                // Octal escape \NNN
+                b'0'..=b'7' if i + 2 < bytes.len() => {
+                    let octal = &inner.as_bytes()[i..i + 3];
+                    if let (Some(a), Some(b), Some(c)) = (
+                        (octal[0] as char).to_digit(8),
+                        (octal[1] as char).to_digit(8),
+                        (octal[2] as char).to_digit(8),
+                    ) {
+                        out.push((a * 64 + b * 8 + c) as u8);
+                        i += 3;
+                    } else {
+                        out.push(b'\\'); // leave as-is
+                    }
+                }
+                _ => { out.push(b'\\'); }
+            }
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// Parse raw unified diff output into structured FileDiff list
 pub fn parse_diff(raw_diff: &str) -> Vec<FileDiff> {
     let mut file_diffs: Vec<FileDiff> = Vec::new();
@@ -57,9 +101,9 @@ pub fn parse_diff(raw_diff: &str) -> Vec<FileDiff> {
                     let b_path = b_part.trim();
                     if b_path == "/dev/null" || b_path.is_empty() {
                         // deletion: fall back to a/ path
-                        a_part.strip_prefix("a/").map(|s| s.trim().to_string())
+                        a_part.strip_prefix("a/").map(|s| unescape_git_path(s.trim()))
                     } else {
-                        Some(b_path.to_string())
+                        Some(unescape_git_path(b_path))
                     }
                 })
                 .unwrap_or_default();
@@ -69,7 +113,7 @@ pub fn parse_diff(raw_diff: &str) -> Vec<FileDiff> {
             });
         } else if line.starts_with("+++ b/") {
             if let Some(file) = &mut current_file {
-                file.filename = line.trim_start_matches("+++ b/").to_string();
+                file.filename = unescape_git_path(line.trim_start_matches("+++ b/"));
             }
         } else if line.starts_with("@@") {
             if let Some(hunk) = current_hunk.take() {
